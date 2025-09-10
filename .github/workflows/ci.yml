@@ -1,0 +1,21 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop, production ]
+  pull_request:
+    branches: [ main, develop, production ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Run basic checks
+        run: |
+          echo "Running CI checks..."
+          # Add actual CI steps here when source code is available
+          echo "CI completed successfully"

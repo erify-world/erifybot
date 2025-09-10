@@ -1,0 +1,191 @@
+name: Auto Tag on Merge
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types:
+      - completed
+    branches:
+      - main
+      - production
+      - develop
+
+jobs:
+  auto-tag:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    
+    permissions:
+      contents: write
+      
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Get merge information
+        id: merge-info
+        run: |
+          # Get the commit that triggered the CI workflow
+          COMMIT_SHA="${{ github.event.workflow_run.head_sha }}"
+          echo "commit-sha=$COMMIT_SHA" >> $GITHUB_OUTPUT
+          
+          # Get the merge commit message to extract source branch
+          MERGE_MESSAGE=$(git log --format=%B -n 1 $COMMIT_SHA)
+          echo "merge-message<<EOF" >> $GITHUB_OUTPUT
+          echo "$MERGE_MESSAGE" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          
+          # Extract source branch from merge message (format: "Merge pull request #123 from owner/release/v1.4.0")
+          SOURCE_BRANCH=$(echo "$MERGE_MESSAGE" | grep -oP 'from [^/]+/\K.*' | head -1 || echo "")
+          echo "source-branch=$SOURCE_BRANCH" >> $GITHUB_OUTPUT
+          
+          # Extract target branch
+          TARGET_BRANCH="${{ github.event.workflow_run.head_branch }}"
+          echo "target-branch=$TARGET_BRANCH" >> $GITHUB_OUTPUT
+          
+          echo "Merge commit: $COMMIT_SHA"
+          echo "Source branch: $SOURCE_BRANCH"
+          echo "Target branch: $TARGET_BRANCH"
+          
+      - name: Validate release branch
+        id: validate
+        run: |
+          SOURCE_BRANCH="${{ steps.merge-info.outputs.source-branch }}"
+          TARGET_BRANCH="${{ steps.merge-info.outputs.target-branch }}"
+          
+          # Check if source branch is a release branch
+          if [[ ! "$SOURCE_BRANCH" =~ ^release/.+ ]]; then
+            echo "Source branch '$SOURCE_BRANCH' is not a release branch. Skipping tagging."
+            echo "should-tag=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # Check if target branch is allowed
+          if [[ ! "$TARGET_BRANCH" =~ ^(main|production|develop)$ ]]; then
+            echo "Target branch '$TARGET_BRANCH' is not an allowed branch for auto-tagging. Skipping."
+            echo "should-tag=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # Extract version from release branch name (e.g., release/v1.4.0 -> v1.4.0)
+          VERSION=$(echo "$SOURCE_BRANCH" | sed 's/^release\///')
+          
+          # Validate version format (should start with 'v' followed by semantic version)
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+.*$ ]]; then
+            echo "Invalid version format in branch name: $VERSION"
+            echo "Expected format: release/v1.2.3"
+            echo "should-tag=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          echo "should-tag=true" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Valid release branch detected: $SOURCE_BRANCH -> $VERSION"
+          
+      - name: Check if tag already exists
+        id: tag-check
+        if: steps.validate.outputs.should-tag == 'true'
+        run: |
+          VERSION="${{ steps.validate.outputs.version }}"
+          
+          if git rev-parse "$VERSION" >/dev/null 2>&1; then
+            echo "Tag $VERSION already exists. Skipping tag creation."
+            echo "tag-exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "Tag $VERSION does not exist. Proceeding with tag creation."
+            echo "tag-exists=false" >> $GITHUB_OUTPUT
+          fi
+          
+      - name: Create tag
+        if: steps.validate.outputs.should-tag == 'true' && steps.tag-check.outputs.tag-exists == 'false'
+        run: |
+          VERSION="${{ steps.validate.outputs.version }}"
+          COMMIT_SHA="${{ steps.merge-info.outputs.commit-sha }}"
+          SOURCE_BRANCH="${{ steps.merge-info.outputs.source-branch }}"
+          TARGET_BRANCH="${{ steps.merge-info.outputs.target-branch }}"
+          
+          # Configure git
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Create annotated tag
+          git tag -a "$VERSION" "$COMMIT_SHA" -m "Release $VERSION from $SOURCE_BRANCH to $TARGET_BRANCH"
+          
+          # Push tag
+          git push origin "$VERSION"
+          
+          echo "✅ Created and pushed tag: $VERSION"
+          
+      - name: Generate changelog
+        if: steps.validate.outputs.should-tag == 'true' && steps.tag-check.outputs.tag-exists == 'false' && vars.CHANGELOG == '1'
+        run: |
+          VERSION="${{ steps.validate.outputs.version }}"
+          COMMIT_SHA="${{ steps.merge-info.outputs.commit-sha }}"
+          DATE=$(date +"%Y-%m-%d")
+          
+          # Create or update CHANGELOG.md
+          if [ ! -f CHANGELOG.md ]; then
+            echo "# Changelog" > CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            echo "All notable changes to this project will be documented in this file." >> CHANGELOG.md
+            echo "" >> CHANGELOG.md
+          fi
+          
+          # Get the previous tag for comparison
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          
+          # Create changelog entry
+          TEMP_FILE=$(mktemp)
+          echo "# Changelog" > "$TEMP_FILE"
+          echo "" >> "$TEMP_FILE"
+          echo "All notable changes to this project will be documented in this file." >> "$TEMP_FILE"
+          echo "" >> "$TEMP_FILE"
+          echo "## [$VERSION] - $DATE" >> "$TEMP_FILE"
+          echo "" >> "$TEMP_FILE"
+          
+          if [ -n "$PREV_TAG" ]; then
+            echo "### Changes since $PREV_TAG" >> "$TEMP_FILE"
+            echo "" >> "$TEMP_FILE"
+            git log --pretty=format:"- %s" "$PREV_TAG".."$COMMIT_SHA" >> "$TEMP_FILE" 2>/dev/null || echo "- Release $VERSION" >> "$TEMP_FILE"
+          else
+            echo "### Changes" >> "$TEMP_FILE"
+            echo "" >> "$TEMP_FILE"
+            echo "- Initial release $VERSION" >> "$TEMP_FILE"
+          fi
+          
+          echo "" >> "$TEMP_FILE"
+          
+          # Append existing changelog content (skip the header)
+          if [ -f CHANGELOG.md ]; then
+            tail -n +4 CHANGELOG.md >> "$TEMP_FILE" 2>/dev/null || true
+          fi
+          
+          # Replace the original file
+          mv "$TEMP_FILE" CHANGELOG.md
+          
+          # Configure git and commit changelog
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git add CHANGELOG.md
+          if git diff --staged --quiet; then
+            echo "No changes to commit in CHANGELOG.md"
+          else
+            git commit -m "Update CHANGELOG.md for $VERSION"
+            git push origin "${{ github.event.workflow_run.head_branch }}"
+            echo "✅ Updated and committed CHANGELOG.md"
+          fi
+          
+      - name: Summary
+        if: always()
+        run: |
+          echo "=== Auto Tag on Merge Summary ==="
+          echo "Source branch: ${{ steps.merge-info.outputs.source-branch }}"
+          echo "Target branch: ${{ steps.merge-info.outputs.target-branch }}"
+          echo "Should tag: ${{ steps.validate.outputs.should-tag }}"
+          echo "Version: ${{ steps.validate.outputs.version }}"
+          echo "Tag exists: ${{ steps.tag-check.outputs.tag-exists }}"
+          echo "Changelog enabled: ${{ vars.CHANGELOG == '1' }}"
