@@ -1,0 +1,36 @@
+name: Auto Tag
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    types:
+      - closed
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.merged)
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Check CI status
+        run: |
+          if [ "$(curl -s https://api.github.com/repos/${{ github.repository }}/commits/${{ github.sha }}/status | jq -r '.state')" != "success" ]; then
+            echo "CI is not green, skipping tagging."
+            exit 1
+          fi
+
+      - name: Create Tag
+        run: |
+          TAG_NAME="v$(date +'%Y.%m.%d')"
+          git tag $TAG_NAME
+          git push origin $TAG_NAME
+
+      - name: Optional Changelog Update
+        run: |
+          # Add your changelog update script here
+          echo "Changelog updated" # Placeholder
