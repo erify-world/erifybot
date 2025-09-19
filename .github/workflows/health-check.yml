@@ -1,0 +1,55 @@
+name: ERIFY Relay Health Check
+
+on:
+  schedule:
+    # Run every 15 minutes
+    - cron: '*/15 * * * *'
+  workflow_dispatch: # Allow manual triggering
+
+jobs:
+  health-check:
+    runs-on: ubuntu-latest
+    name: Check Relay Status
+    
+    steps:
+      - name: Check Health Endpoint
+        run: |
+          echo "🔥 Checking ERIFY Incident Relay health..."
+          
+          # Test health endpoint
+          health_response=$(curl -s -w "%{http_code}" https://relay.erifyteam.com/health)
+          health_code="${health_response: -3}"
+          health_body="${health_response%???}"
+          
+          echo "Health endpoint status: $health_code"
+          
+          if [ "$health_code" != "200" ]; then
+            echo "❌ Health check failed with status $health_code"
+            exit 1
+          fi
+          
+          # Parse JSON response
+          echo "$health_body" | jq .
+          
+          # Test badge endpoint
+          badge_response=$(curl -s -w "%{http_code}" https://relay.erifyteam.com/badge)
+          badge_code="${badge_response: -3}"
+          badge_body="${badge_response%???}"
+          
+          echo "Badge endpoint status: $badge_code"
+          
+          if [ "$badge_code" != "200" ]; then
+            echo "❌ Badge endpoint failed with status $badge_code"
+            exit 1
+          fi
+          
+          echo "$badge_body" | jq .
+          
+          echo "✅ All endpoints are healthy!"
+
+      - name: Notify on Failure
+        if: failure()
+        run: |
+          echo "🚨 ERIFY Incident Relay is down or unhealthy!"
+          echo "This would be where you'd send notifications to Discord, Slack, etc."
+          # Example: curl webhook to notify team
