@@ -1,0 +1,75 @@
+name: ERIFY Relay Health Check
+
+on:
+  schedule:
+    # Run every 30 minutes
+    - cron: '*/30 * * * *'
+  workflow_dispatch: # Allow manual triggering
+
+jobs:
+  health-check:
+    runs-on: ubuntu-latest
+    name: Check ERIFY Incident Relay Health
+    
+    steps:
+      - name: Check Health Endpoint
+        id: health_check
+        run: |
+          echo "Checking health endpoint: ${{ secrets.RELAY_HEALTH_URL }}"
+          
+          # Make the health check request
+          response=$(curl -s -w "%{http_code}" -o response.json "${{ secrets.RELAY_HEALTH_URL }}")
+          http_code="${response: -3}"
+          
+          echo "HTTP Status Code: $http_code"
+          
+          # Check if HTTP request was successful
+          if [ "$http_code" != "200" ]; then
+            echo "❌ Health check failed with HTTP status: $http_code"
+            echo "health_status=failed" >> $GITHUB_OUTPUT
+            echo "error_message=HTTP request failed with status $http_code" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          # Parse JSON response and check status field
+          if command -v jq >/dev/null 2>&1; then
+            status=$(jq -r '.status // empty' response.json)
+          else
+            # Fallback if jq is not available
+            status=$(grep -o '"status"[[:space:]]*:[[:space:]]*"[^"]*"' response.json | sed 's/.*"status"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+          fi
+          
+          echo "Relay Status: $status"
+          
+          # Validate status
+          if [ "$status" = "ok" ]; then
+            echo "✅ ERIFY Incident Relay is healthy"
+            echo "health_status=ok" >> $GITHUB_OUTPUT
+          else
+            echo "❌ ERIFY Incident Relay status is not 'ok': $status"
+            echo "health_status=failed" >> $GITHUB_OUTPUT
+            echo "error_message=Relay status is '$status', expected 'ok'" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          # Clean up
+          rm -f response.json
+
+      - name: Report Success
+        if: success()
+        run: |
+          echo "🎉 Health check completed successfully"
+          echo "The ERIFY Incident Relay is operational and responding correctly"
+
+      - name: Report Failure
+        if: failure()
+        run: |
+          echo "💥 Health check failed!"
+          echo "The ERIFY Incident Relay may be experiencing issues"
+          echo "Please investigate the relay status immediately"
+          
+          # Optional: Add webhook notification logic here
+          # Example: Send to Discord/Slack webhook
+          # curl -X POST -H 'Content-type: application/json' \
+          #   --data '{"text":"🚨 ERIFY Relay Health Check Failed!"}' \
+          #   $WEBHOOK_URL
