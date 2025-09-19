@@ -1,0 +1,294 @@
+---
+name: "ERIFY™ Relay Failure Notifications"
+
+"on":
+  workflow_run:
+    workflows: ["Relay Health Check"]
+    types:
+      - completed
+
+jobs:
+  notify-failure:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+
+    steps:
+      - name: "👑 Prepare ERIFY™ Notification Data"
+        id: prepare
+        run: |
+          # Get current timestamp
+          TIMESTAMP=$(date -u '+%Y-%m-%d %H:%M:%S UTC')
+
+          # Prepare common variables
+          WORKFLOW_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}"
+          HEALTH_URL="${{ secrets.RELAY_HEALTH_URL }}"
+          REPO_NAME="${{ github.repository }}"
+
+          # Set outputs for other steps
+          echo "timestamp=$TIMESTAMP" >> $GITHUB_OUTPUT
+          echo "workflow_url=$WORKFLOW_URL" >> $GITHUB_OUTPUT
+          echo "health_url=$HEALTH_URL" >> $GITHUB_OUTPUT
+          echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
+
+          echo "🔥 ERIFY™ Relay Health Check Failed - Preparing notifications..."
+
+      - name: "🥇 Send Slack Notification"
+        if: ${{ secrets.SLACK_WEBHOOK_URL }}
+        uses: 8398a7/action-slack@v3
+        with:
+          status: custom
+          custom_payload: |
+            {
+              "channel": "#alerts",
+              "username": "ERIFY™ Crown Guard",
+              "icon_emoji": ":crown:",
+              "attachments": [
+                {
+                  "color": "#FFD700",
+                  "fallback": "🚨 ERIFY™ Relay Health Check Failed",
+                  "title": "👑 ERIFY™ Relay Health Check Failed",
+                  "title_link": "${{ steps.prepare.outputs.workflow_url }}",
+                  "fields": [
+                    {
+                      "title": "Repository",
+                      "value": "${{ steps.prepare.outputs.repo_name }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Status",
+                      "value": "❌ FAILED",
+                      "short": true
+                    },
+                    {
+                      "title": "Health Endpoint",
+                      "value": "${{ steps.prepare.outputs.health_url }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Timestamp",
+                      "value": "${{ steps.prepare.outputs.timestamp }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Workflow Run",
+                      "value": "<${{ steps.prepare.outputs.workflow_url }}|View Details>",
+                      "short": false
+                    }
+                  ],
+                  "footer": "ERIFY™ Technologies • Luxury-grade monitoring • Crown your infrastructure",
+                  "footer_icon": "https://cdn.jsdelivr.net/gh/twemoji/twemoji@14.0.2/assets/72x72/1f451.png"
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: "💎 Send Discord Notification"
+        if: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          # Prepare Discord webhook payload with ERIFY™ branding
+          cat > discord_payload.json << 'EOF'
+          {
+            "username": "ERIFY™ Crown Guard",
+            "avatar_url": "https://cdn.jsdelivr.net/gh/twemoji/twemoji@14.0.2/assets/72x72/1f451.png",
+            "embeds": [
+              {
+                "title": "👑 ERIFY™ Relay Health Check Failed",
+                "description": "🚨 **Critical Alert**: The relay health monitoring has detected a failure.",
+                "url": "${{ steps.prepare.outputs.workflow_url }}",
+                "color": 16766720,
+                "fields": [
+                  {
+                    "name": "🏛️ Repository",
+                    "value": "${{ steps.prepare.outputs.repo_name }}",
+                    "inline": true
+                  },
+                  {
+                    "name": "⚡ Status",
+                    "value": "❌ **FAILED**",
+                    "inline": true
+                  },
+                  {
+                    "name": "🔗 Health Endpoint",
+                    "value": "${{ steps.prepare.outputs.health_url }}",
+                    "inline": true
+                  },
+                  {
+                    "name": "⏰ Timestamp",
+                    "value": "${{ steps.prepare.outputs.timestamp }}",
+                    "inline": true
+                  },
+                  {
+                    "name": "📊 Workflow Details",
+                    "value": "[View Run Details](${{ steps.prepare.outputs.workflow_url }})",
+                    "inline": false
+                  }
+                ],
+                "footer": {
+                  "text": "ERIFY™ Technologies • Luxury-grade monitoring • Crown your infrastructure 💎🔥",
+                  "icon_url": "https://cdn.jsdelivr.net/gh/twemoji/twemoji@14.0.2/assets/72x72/1f451.png"
+                },
+                "timestamp": "$(date -u +'%Y-%m-%dT%H:%M:%S.000Z')"
+              }
+            ]
+          }
+          EOF
+
+          # Send to Discord
+          curl -H "Content-Type: application/json" \
+               -d @discord_payload.json \
+               "${{ secrets.DISCORD_WEBHOOK_URL }}"
+
+          echo "💎 Discord notification sent with ERIFY™ branding"
+
+  notify-recovery:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+
+    steps:
+      - name: "🔍 Check if Previous Run Failed"
+        id: check_previous
+        run: |
+          # Get the previous workflow run to see if it failed
+          PREVIOUS_RUN=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/relay-health-check.yml/runs?per_page=2" \
+            | jq -r '.workflow_runs[1].conclusion // "unknown"')
+
+          echo "previous_conclusion=$PREVIOUS_RUN" >> $GITHUB_OUTPUT
+
+          if [ "$PREVIOUS_RUN" = "failure" ]; then
+            echo "🎉 Previous run failed, this is a recovery!"
+            echo "is_recovery=true" >> $GITHUB_OUTPUT
+          else
+            echo "ℹ️ Previous run did not fail, no recovery notification needed"
+            echo "is_recovery=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: "👑 Prepare Recovery Notification Data"
+        if: steps.check_previous.outputs.is_recovery == 'true'
+        id: prepare_recovery
+        run: |
+          # Get current timestamp
+          TIMESTAMP=$(date -u '+%Y-%m-%d %H:%M:%S UTC')
+
+          # Prepare common variables
+          WORKFLOW_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}"
+          HEALTH_URL="${{ secrets.RELAY_HEALTH_URL }}"
+          REPO_NAME="${{ github.repository }}"
+
+          # Set outputs for other steps
+          echo "timestamp=$TIMESTAMP" >> $GITHUB_OUTPUT
+          echo "workflow_url=$WORKFLOW_URL" >> $GITHUB_OUTPUT
+          echo "health_url=$HEALTH_URL" >> $GITHUB_OUTPUT
+          echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
+
+          echo "✨ ERIFY™ Relay Recovery Detected - Preparing celebration notifications..."
+
+      - name: "🥇 Send Slack Recovery Notification"
+        if: steps.check_previous.outputs.is_recovery == 'true' && secrets.SLACK_WEBHOOK_URL
+        uses: 8398a7/action-slack@v3
+        with:
+          status: custom
+          custom_payload: |
+            {
+              "channel": "#alerts",
+              "username": "ERIFY™ Crown Guard",
+              "icon_emoji": ":crown:",
+              "attachments": [
+                {
+                  "color": "#00FF00",
+                  "fallback": "✅ ERIFY™ Relay Health Check Recovered",
+                  "title": "👑 ERIFY™ Relay Health Check Recovered",
+                  "title_link": "${{ steps.prepare_recovery.outputs.workflow_url }}",
+                  "fields": [
+                    {
+                      "title": "Repository",
+                      "value": "${{ steps.prepare_recovery.outputs.repo_name }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Status",
+                      "value": "✅ RECOVERED",
+                      "short": true
+                    },
+                    {
+                      "title": "Health Endpoint",
+                      "value": "${{ steps.prepare_recovery.outputs.health_url }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Recovery Time",
+                      "value": "${{ steps.prepare_recovery.outputs.timestamp }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Workflow Run",
+                      "value": "<${{ steps.prepare_recovery.outputs.workflow_url }}|View Details>",
+                      "short": false
+                    }
+                  ],
+                  "footer": "ERIFY™ Technologies • Luxury-grade monitoring • Crown your infrastructure",
+                  "footer_icon": "https://cdn.jsdelivr.net/gh/twemoji/twemoji@14.0.2/assets/72x72/1f451.png"
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: "💎 Send Discord Recovery Notification"
+        if: steps.check_previous.outputs.is_recovery == 'true' && secrets.DISCORD_WEBHOOK_URL
+        run: |
+          # Prepare Discord webhook payload for recovery
+          cat > discord_recovery_payload.json << 'EOF'
+          {
+            "username": "ERIFY™ Crown Guard",
+            "avatar_url": "https://cdn.jsdelivr.net/gh/twemoji/twemoji@14.0.2/assets/72x72/1f451.png",
+            "embeds": [
+              {
+                "title": "👑 ERIFY™ Relay Health Check Recovered",
+                "description": "🎉 **Great News**: The relay health monitoring has recovered from the previous failure!",
+                "url": "${{ steps.prepare_recovery.outputs.workflow_url }}",
+                "color": 65280,
+                "fields": [
+                  {
+                    "name": "🏛️ Repository",
+                    "value": "${{ steps.prepare_recovery.outputs.repo_name }}",
+                    "inline": true
+                  },
+                  {
+                    "name": "⚡ Status",
+                    "value": "✅ **RECOVERED**",
+                    "inline": true
+                  },
+                  {
+                    "name": "🔗 Health Endpoint",
+                    "value": "${{ steps.prepare_recovery.outputs.health_url }}",
+                    "inline": true
+                  },
+                  {
+                    "name": "⏰ Recovery Time",
+                    "value": "${{ steps.prepare_recovery.outputs.timestamp }}",
+                    "inline": true
+                  },
+                  {
+                    "name": "📊 Workflow Details",
+                    "value": "[View Run Details](${{ steps.prepare_recovery.outputs.workflow_url }})",
+                    "inline": false
+                  }
+                ],
+                "footer": {
+                  "text": "ERIFY™ Technologies • Luxury-grade monitoring • Crown your infrastructure 💎🔥",
+                  "icon_url": "https://cdn.jsdelivr.net/gh/twemoji/twemoji@14.0.2/assets/72x72/1f451.png"
+                },
+                "timestamp": "$(date -u +'%Y-%m-%dT%H:%M:%S.000Z')"
+              }
+            ]
+          }
+          EOF
+
+          # Send to Discord
+          curl -H "Content-Type: application/json" \
+               -d @discord_recovery_payload.json \
+               "${{ secrets.DISCORD_WEBHOOK_URL }}"
+
+          echo "💎 Discord recovery notification sent with ERIFY™ branding"

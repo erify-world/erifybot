@@ -1,0 +1,47 @@
+---
+name: "Relay Health Check"
+
+"on":
+  schedule:
+    # Run every 5 minutes
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+    # Allow manual triggering
+
+jobs:
+  health-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: "🔍 Check Relay Health"
+        run: |
+          HEALTH_URL="${{ secrets.RELAY_HEALTH_URL }}"
+
+          if [ -z "$HEALTH_URL" ]; then
+            echo "❌ RELAY_HEALTH_URL secret not configured"
+            exit 1
+          fi
+
+          echo "🔍 Checking health endpoint: $HEALTH_URL"
+
+          # Perform health check with timeout
+          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
+                          --max-time 30 \
+                          --connect-timeout 10 \
+                          "$HEALTH_URL" || echo "000")
+
+          if [ "$RESPONSE" = "200" ]; then
+            echo "✅ Health check passed (HTTP $RESPONSE)"
+          else
+            echo "❌ Health check failed (HTTP $RESPONSE)"
+            exit 1
+          fi
+
+      - name: "📊 Report Health Status"
+        if: always()
+        run: |
+          if [ $? -eq 0 ]; then
+            echo "🎉 ERIFY™ Relay is healthy and operational"
+          else
+            echo "🚨 ERIFY™ Relay health check failed - notifications will be sent"
+          fi
