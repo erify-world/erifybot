@@ -1,0 +1,13 @@
+name = "erify-incident-relay"
+main = "src/index.ts"
+compatibility_date = "2023-12-18"
+
+[env.production]
+routes = [
+  "relay.erifyteam.com/*"
+]
+
+[[env.production.kv_namespaces]]
+binding = "RELAY_STATUS"
+id = "your-kv-namespace-id"
+preview_id = "your-preview-kv-namespace-id"
