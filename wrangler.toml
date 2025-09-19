@@ -1,0 +1,43 @@
+name = "erify-incident-relay"
+main = "src/worker.js"
+compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Environment variables (set these in Wrangler or Cloudflare Dashboard)
+[vars]
+# Example values - replace with actual URLs in production
+# SLACK_URL = "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK"
+# DISCORD_URL = "https://discord.com/api/webhooks/YOUR/DISCORD/WEBHOOK"
+# BRAND_AVATAR_URL = "https://cdn.erify.world/assets/erify-logo.png"
+# RELAY_AUTH_TOKEN = "your-secret-token-here"
+
+# Production environment
+[env.production]
+name = "erify-incident-relay-prod"
+routes = [
+  { pattern = "incidents.erify.world/*", zone_name = "erify.world" }
+]
+
+# Staging environment
+[env.staging]
+name = "erify-incident-relay-staging"
+
+# Development environment
+[env.development]
+name = "erify-incident-relay-dev"
+
+# Custom routes for production deployment
+# Uncomment and configure these if you have a custom domain
+# [[routes]]
+# pattern = "incidents.erify.world/*"
+# zone_name = "erify.world"
+
+# Rate limiting and other settings
+[limits]
+cpu_ms = 50
+
+# KV namespaces (if needed for future enhancements)
+# [[kv_namespaces]]
+# binding = "INCIDENT_CACHE"
+# id = "your-kv-namespace-id"
+# preview_id = "your-preview-kv-namespace-id"

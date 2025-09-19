@@ -1,0 +1,37 @@
+{
+  "page": {
+    "id": "page-123",
+    "name": "ERIFY™ Platform Status",
+    "subdomain": "erify-status"
+  },
+  "incident": {
+    "id": "statuspage-incident-456",
+    "name": "Database Performance Degradation",
+    "status": "investigating",
+    "impact": "major",
+    "created_at": "2024-01-15T18:45:00Z",
+    "updated_at": "2024-01-15T18:45:00Z",
+    "shortlink": "https://stspg.io/abc123",
+    "incident_updates": [
+      {
+        "body": "We are investigating reports of database performance issues affecting user authentication and data retrieval operations. Users may experience login delays and slower dashboard loading times.",
+        "status": "investigating",
+        "created_at": "2024-01-15T18:45:00Z"
+      }
+    ],
+    "components": [
+      {
+        "id": "comp-1",
+        "name": "Primary Database"
+      },
+      {
+        "id": "comp-2", 
+        "name": "User Authentication"
+      },
+      {
+        "id": "comp-3",
+        "name": "Dashboard API"
+      }
+    ]
+  }
+}
