@@ -1,0 +1,348 @@
+name: ERIFY Incident Relay Notification
+
+on:
+  schedule:
+    # Run every 5 minutes to monitor relay health
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+    # Allow manual triggering for testing
+
+env:
+  RELAY_HEALTH_URL: ${{ secrets.RELAY_HEALTH_URL }}
+  SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+  DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+
+jobs:
+  monitor-relay:
+    runs-on: ubuntu-latest
+    name: Monitor ERIFY Relay Health
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Check Relay Health and Send Notifications
+        id: health-check
+        run: |
+          #!/bin/bash
+          set -e
+          
+          # Colors for console output
+          RED='\033[0;31m'
+          YELLOW='\033[1;33m'
+          GREEN='\033[0;32m'
+          NC='\033[0m' # No Color
+          
+          echo "🔍 Starting ERIFY Relay health check..."
+          
+          # Initialize variables
+          CURRENT_STATE="unknown"
+          SLACK_STATUS="unknown"
+          DISCORD_STATUS="unknown"
+          
+          # Test Slack webhook
+          echo "Testing Slack connection..."
+          if curl -f -s -X POST "$SLACK_WEBHOOK_URL" \
+            -H "Content-type: application/json" \
+            -d '{"text":"Health check ping"}' >/dev/null 2>&1; then
+            SLACK_STATUS="ok"
+            echo -e "${GREEN}✅ Slack is responding${NC}"
+          else
+            SLACK_STATUS="failed"
+            echo -e "${RED}❌ Slack is not responding${NC}"
+          fi
+          
+          # Test Discord webhook
+          echo "Testing Discord connection..."
+          if curl -f -s -X POST "$DISCORD_WEBHOOK_URL" \
+            -H "Content-type: application/json" \
+            -d '{"content":"Health check ping"}' >/dev/null 2>&1; then
+            DISCORD_STATUS="ok"
+            echo -e "${GREEN}✅ Discord is responding${NC}"
+          else
+            DISCORD_STATUS="failed"
+            echo -e "${RED}❌ Discord is not responding${NC}"
+          fi
+          
+          # Test main relay health endpoint
+          echo "Testing main relay endpoint..."
+          if curl -f -s "$RELAY_HEALTH_URL" >/dev/null 2>&1; then
+            echo -e "${GREEN}✅ Main relay endpoint is responding${NC}"
+            # Determine overall state based on notification channels
+            if [[ "$SLACK_STATUS" == "ok" && "$DISCORD_STATUS" == "ok" ]]; then
+              CURRENT_STATE="ok"
+            elif [[ "$SLACK_STATUS" == "ok" || "$DISCORD_STATUS" == "ok" ]]; then
+              CURRENT_STATE="degraded"
+            else
+              CURRENT_STATE="down"
+            fi
+          else
+            echo -e "${RED}❌ Main relay endpoint is not responding${NC}"
+            CURRENT_STATE="down"
+          fi
+          
+          echo "Current state: $CURRENT_STATE"
+          echo "Slack status: $SLACK_STATUS"
+          echo "Discord status: $DISCORD_STATUS"
+          
+          # Export variables for next steps
+          echo "CURRENT_STATE=$CURRENT_STATE" >> $GITHUB_OUTPUT
+          echo "SLACK_STATUS=$SLACK_STATUS" >> $GITHUB_OUTPUT
+          echo "DISCORD_STATUS=$DISCORD_STATUS" >> $GITHUB_OUTPUT
+          
+      - name: Get Previous State
+        id: previous-state
+        run: |
+          #!/bin/bash
+          
+          # Try to get the previous state from GitHub API
+          # We'll use the last workflow run conclusion as a proxy for state
+          PREVIOUS_STATE="unknown"
+          
+          # Get the last successful run (if any)
+          LAST_RUN=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/notify-relay-failures.yml/runs?status=completed&per_page=1" \
+            | jq -r '.workflow_runs[0].conclusion // "unknown"' 2>/dev/null || echo "unknown")
+          
+          # Map GitHub Actions conclusion to our state system
+          case "$LAST_RUN" in
+            "success") PREVIOUS_STATE="ok" ;;
+            "failure") PREVIOUS_STATE="down" ;;
+            "cancelled") PREVIOUS_STATE="degraded" ;;
+            *) PREVIOUS_STATE="unknown" ;;
+          esac
+          
+          echo "Previous state: $PREVIOUS_STATE (from conclusion: $LAST_RUN)"
+          echo "PREVIOUS_STATE=$PREVIOUS_STATE" >> $GITHUB_OUTPUT
+          
+      - name: Determine State Transition
+        id: transition
+        run: |
+          #!/bin/bash
+          
+          CURRENT="${{ steps.health-check.outputs.CURRENT_STATE }}"
+          PREVIOUS="${{ steps.previous-state.outputs.PREVIOUS_STATE }}"
+          
+          echo "State transition: $PREVIOUS → $CURRENT"
+          
+          SHOULD_NOTIFY="false"
+          TRANSITION_TYPE="none"
+          
+          # Determine if we should notify based on state changes
+          if [[ "$PREVIOUS" != "$CURRENT" ]] || [[ "$PREVIOUS" == "unknown" ]]; then
+            SHOULD_NOTIFY="true"
+            
+            if [[ "$PREVIOUS" == "down" && "$CURRENT" == "ok" ]] || \
+               [[ "$PREVIOUS" == "degraded" && "$CURRENT" == "ok" ]]; then
+              TRANSITION_TYPE="recovery"
+            elif [[ "$PREVIOUS" == "unknown" && "$CURRENT" == "ok" ]]; then
+              TRANSITION_TYPE="recovery"
+            elif [[ "$CURRENT" == "down" ]]; then
+              TRANSITION_TYPE="failure"
+            elif [[ "$CURRENT" == "degraded" ]]; then
+              TRANSITION_TYPE="degradation"
+            elif [[ "$PREVIOUS" == "down" && "$CURRENT" == "degraded" ]]; then
+              TRANSITION_TYPE="improvement"
+            else
+              TRANSITION_TYPE="change"
+            fi
+          fi
+          
+          echo "Should notify: $SHOULD_NOTIFY"
+          echo "Transition type: $TRANSITION_TYPE"
+          
+          echo "SHOULD_NOTIFY=$SHOULD_NOTIFY" >> $GITHUB_OUTPUT
+          echo "TRANSITION_TYPE=$TRANSITION_TYPE" >> $GITHUB_OUTPUT
+          
+      - name: Send Slack Notification
+        if: steps.transition.outputs.SHOULD_NOTIFY == 'true' && steps.health-check.outputs.SLACK_STATUS == 'ok'
+        run: |
+          #!/bin/bash
+          
+          CURRENT="${{ steps.health-check.outputs.CURRENT_STATE }}"
+          TRANSITION="${{ steps.transition.outputs.TRANSITION_TYPE }}"
+          SLACK_STATUS="${{ steps.health-check.outputs.SLACK_STATUS }}"
+          DISCORD_STATUS="${{ steps.health-check.outputs.DISCORD_STATUS }}"
+          
+          # Choose emoji and color based on state
+          case "$CURRENT" in
+            "ok")
+              if [[ "$TRANSITION" == "recovery" ]]; then
+                EMOJI="✅"
+                COLOR="good"
+                STATUS_TEXT="RECOVERED"
+              else
+                EMOJI="✅"
+                COLOR="good"
+                STATUS_TEXT="OK"
+              fi
+              ;;
+            "degraded")
+              EMOJI="🟡"
+              COLOR="warning"
+              STATUS_TEXT="DEGRADED"
+              ;;
+            "down")
+              EMOJI="🔥"
+              COLOR="danger"
+              STATUS_TEXT="DOWN"
+              ;;
+          esac
+          
+          # Create detailed status message
+          DETAILS=""
+          if [[ "$SLACK_STATUS" == "failed" ]]; then
+            DETAILS="${DETAILS}• Slack notifications: ❌ Failed\n"
+          else
+            DETAILS="${DETAILS}• Slack notifications: ✅ OK\n"
+          fi
+          
+          if [[ "$DISCORD_STATUS" == "failed" ]]; then
+            DETAILS="${DETAILS}• Discord notifications: ❌ Failed\n"
+          else
+            DETAILS="${DETAILS}• Discord notifications: ✅ OK\n"
+          fi
+          
+          TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          
+          # Send Slack notification with rich formatting
+          curl -X POST "$SLACK_WEBHOOK_URL" \
+            -H "Content-type: application/json" \
+            -d "{
+              \"attachments\": [
+                {
+                  \"color\": \"$COLOR\",
+                  \"title\": \"$EMOJI ERIFY Incident Relay - $STATUS_TEXT\",
+                  \"text\": \"The ERIFY Incident Relay status has changed.\",
+                  \"fields\": [
+                    {
+                      \"title\": \"Current Status\",
+                      \"value\": \"$CURRENT\",
+                      \"short\": true
+                    },
+                    {
+                      \"title\": \"Transition\",
+                      \"value\": \"$TRANSITION\",
+                      \"short\": true
+                    },
+                    {
+                      \"title\": \"Component Status\",
+                      \"value\": \"$DETAILS\",
+                      \"short\": false
+                    }
+                  ],
+                  \"footer\": \"ERIFY™ Incident Relay\",
+                  \"ts\": $(date +%s)
+                }
+              ]
+            }"
+            
+      - name: Send Discord Notification
+        if: steps.transition.outputs.SHOULD_NOTIFY == 'true' && steps.health-check.outputs.DISCORD_STATUS == 'ok'
+        run: |
+          #!/bin/bash
+          
+          CURRENT="${{ steps.health-check.outputs.CURRENT_STATE }}"
+          TRANSITION="${{ steps.transition.outputs.TRANSITION_TYPE }}"
+          SLACK_STATUS="${{ steps.health-check.outputs.SLACK_STATUS }}"
+          DISCORD_STATUS="${{ steps.health-check.outputs.DISCORD_STATUS }}"
+          
+          # Choose embed color and emoji based on state
+          case "$CURRENT" in
+            "ok")
+              if [[ "$TRANSITION" == "recovery" ]]; then
+                COLOR=65280  # Green
+                EMOJI="✅"
+                STATUS_TEXT="RECOVERED"
+              else
+                COLOR=65280  # Green
+                EMOJI="✅"
+                STATUS_TEXT="OK"
+              fi
+              ;;
+            "degraded")
+              COLOR=16776960  # Yellow
+              EMOJI="🟡"
+              STATUS_TEXT="DEGRADED"
+              ;;
+            "down")
+              COLOR=16711680  # Red
+              EMOJI="🔥"
+              STATUS_TEXT="DOWN"
+              ;;
+          esac
+          
+          # Create component status
+          COMPONENTS=""
+          if [[ "$SLACK_STATUS" == "failed" ]]; then
+            COMPONENTS="${COMPONENTS}• Slack: ❌ Failed\n"
+          else
+            COMPONENTS="${COMPONENTS}• Slack: ✅ OK\n"
+          fi
+          
+          if [[ "$DISCORD_STATUS" == "failed" ]]; then
+            COMPONENTS="${COMPONENTS}• Discord: ❌ Failed\n"
+          else
+            COMPONENTS="${COMPONENTS}• Discord: ✅ OK\n"
+          fi
+          
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
+          
+          # Send Discord notification with embed
+          curl -X POST "$DISCORD_WEBHOOK_URL" \
+            -H "Content-type: application/json" \
+            -d "{
+              \"embeds\": [
+                {
+                  \"title\": \"$EMOJI ERIFY Incident Relay - $STATUS_TEXT\",
+                  \"description\": \"The ERIFY Incident Relay status has changed.\",
+                  \"color\": $COLOR,
+                  \"fields\": [
+                    {
+                      \"name\": \"Current Status\",
+                      \"value\": \"$CURRENT\",
+                      \"inline\": true
+                    },
+                    {
+                      \"name\": \"Transition Type\",
+                      \"value\": \"$TRANSITION\",
+                      \"inline\": true
+                    },
+                    {
+                      \"name\": \"Component Status\",
+                      \"value\": \"$COMPONENTS\",
+                      \"inline\": false
+                    }
+                  ],
+                  \"footer\": {
+                    \"text\": \"ERIFY™ Incident Relay 👑\"
+                  },
+                  \"timestamp\": \"$TIMESTAMP\"
+                }
+              ]
+            }"
+            
+      - name: Set Workflow Status
+        run: |
+          #!/bin/bash
+          
+          CURRENT="${{ steps.health-check.outputs.CURRENT_STATE }}"
+          
+          # Set the workflow exit code based on current state
+          # This helps with state tracking for the next run
+          case "$CURRENT" in
+            "ok")
+              echo "✅ Relay is healthy"
+              exit 0
+              ;;
+            "degraded")
+              echo "🟡 Relay is degraded"
+              # Use cancelled status to represent degraded state
+              echo "GITHUB_STEP_SUMMARY=Relay status: DEGRADED - Partial failure detected" >> $GITHUB_ENV
+              exit 0  # Don't fail the workflow, just mark as different state
+              ;;
+            "down")
+              echo "🔥 Relay is down"
+              exit 1  # Fail the workflow to represent down state
+              ;;
+          esac
