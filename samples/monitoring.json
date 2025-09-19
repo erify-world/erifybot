@@ -1,0 +1,12 @@
+{
+  "id": "inc-2024-001",
+  "title": "High Response Times on API Gateway",
+  "status": "monitoring",
+  "severity": "major",
+  "description": "We have identified the root cause of the elevated response times and have implemented a fix by scaling our load balancers. We are currently monitoring the situation closely to ensure stability and normal response times are restored.",
+  "components": ["API Gateway", "Load Balancer", "Authentication Service"],
+  "url": "https://status.erify.world/incidents/2024-001",
+  "page_name": "ERIFY™ Platform Status",
+  "created_at": "2024-01-15T14:30:00Z",
+  "updated_at": "2024-01-15T15:15:00Z"
+}

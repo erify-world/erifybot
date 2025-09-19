@@ -1,0 +1,12 @@
+{
+  "id": "inc-2024-001",
+  "title": "High Response Times on API Gateway",
+  "status": "resolved",
+  "severity": "major",
+  "description": "The issue with elevated response times has been fully resolved. All systems are operating normally and response times have returned to baseline levels. We will be conducting a comprehensive post-incident review to prevent similar issues in the future and strengthen our monitoring capabilities.",
+  "components": ["API Gateway", "Load Balancer", "Authentication Service"],
+  "url": "https://status.erify.world/incidents/2024-001",
+  "page_name": "ERIFY™ Platform Status",
+  "created_at": "2024-01-15T14:30:00Z",
+  "updated_at": "2024-01-15T16:00:00Z"
+}

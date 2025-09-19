@@ -1,0 +1,35 @@
+{
+  "name": "erify-incident-relay",
+  "version": "1.0.0",
+  "description": "ERIFY™ Incident Alert Relay Worker for Cloudflare",
+  "main": "src/worker.js",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "deploy:staging": "wrangler deploy --env staging",
+    "deploy:prod": "wrangler deploy --env production",
+    "test": "curl -X POST http://localhost:8787/relay -H 'Content-Type: application/json' -d @samples/investigating.json"
+  },
+  "keywords": [
+    "cloudflare",
+    "worker",
+    "incident",
+    "alerts",
+    "slack",
+    "discord",
+    "erify"
+  ],
+  "author": "ERIFY™ Technologies",
+  "license": "CC0-1.0",
+  "devDependencies": {
+    "wrangler": "^3.114.14"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/erify-world/erifybot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/erify-world/erifybot/issues"
+  },
+  "homepage": "https://github.com/erify-world/erifybot#readme"
+}
